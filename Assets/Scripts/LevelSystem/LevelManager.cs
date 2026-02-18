@@ -23,6 +23,13 @@ public class LevelManager : MonoBehaviour
     // Cada elemento es una coordenada (x, y) de tile
     public Vector2Int[] enemyStartPositions;
 
+    // ⬇️ Esta variable indica si el nivel ya ha sido completado.
+    // Cuando el jugador pisa TODOS los tiles, la ponemos a true.
+    // Los enemigos la consultan para saber si deben detenerse.
+    public bool levelCompleted = false;
+
+
+
 
 
     private void Start()
@@ -35,18 +42,33 @@ public class LevelManager : MonoBehaviour
 
         foreach (TileController tile in allTiles)
         {
-            // Convertimos la posición del tile en coordenadas lógicas
+            // Convertimos la posición del tile en coordenadas lógicas (X = columna, Z = fila)
             int x = Mathf.FloorToInt(tile.transform.position.x + 0.5f);
             int y = Mathf.FloorToInt(tile.transform.position.z + 0.5f);
 
-
-            // Guardamos el tile en la matriz
+            // Guardamos el tile en la matriz lógica
             tiles[x, y] = tile;
+
+            // Guardamos también la altura lógica del tile (por si queremos usarla más adelante)
+            // Ejemplo: si el tile está en Y = 0 → heightLevel = 0, si está en Y = 1 → heightLevel = 1, etc.
+            tile.heightLevel = Mathf.RoundToInt(tile.transform.position.y);
         }
 
+
         // Inicializamos al jugador en la posición (0,0)
-        player.Init(new Vector2Int(0, 0));
-        player.transform.position = new Vector3(0, 1, 0);
+        Vector2Int startCoords = new Vector2Int(0, 0);
+        player.Init(startCoords);
+        player.SetLevelManager(this);
+
+
+        TileController startTile = GetTile(startCoords);
+
+        //coge offset del playerController que es una variable publica y que desde inspector puedo cambiar y se cambia en todas partes
+        float playerOffsetY = PlayerController.PLAYER_OFFSET_Y;
+
+
+        player.transform.position = startTile.transform.position + Vector3.up * playerOffsetY;
+
 
         // ⭐ CREAR ENEMIGOS AUTOMÁTICAMENTE ⭐
         if (enemyStartPositions != null && enemyStartPositions.Length > 0)
@@ -75,16 +97,23 @@ public class LevelManager : MonoBehaviour
     }
     public bool CheckVictory()
     {
+        // ⬇️ Recorremos todos los tiles del tablero
         foreach (TileController tile in tiles)
         {
+            // Si encontramos un tile que NO ha sido pisado → aún no hay victoria
             if (tile != null && tile.isChanged == false)
             {
-                return false; // Aún hay tiles sin pisar
+                return false;
             }
         }
 
-        return true; // Todos pisados → victoria
+        // ⬇️ Si llegamos aquí significa que TODOS los tiles están pisados.
+        // Marcamos que el nivel está completado para que los enemigos se detengan.
+        levelCompleted = true;
+
+        return true; // ← Victoria
     }
+
 
 
 

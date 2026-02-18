@@ -14,6 +14,8 @@ public class TileController : MonoBehaviour
     // Referencia al Renderer para cambiar el color del material
     private Renderer rend;
 
+    // nivel de altura del tile (opcional)
+    public int heightLevel = 0;
 
 
     private void Awake()

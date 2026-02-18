@@ -28,30 +28,78 @@ public class EnemyController : MonoBehaviour
     // Prefab de partículas que se instanciará al moverse
     public GameObject stepParticlesPrefab;
 
+    // Offset vertical del enemigo para que quede encima del tile
+    public const float enemyOffsetY = 1.5f;
+
+    // Esta referencia la asigna el LevelManager cuando crea al enemigo
+    private LevelManager lm;
+
+    // Esta es la referencia elegante que usaremos internamente
+    public LevelManager levelmanager;
+
+    // Altura del salto del enemigo (ajustable)
+    public float jumpHeight = 0.4f;
+
+    // Intensidad del squash & stretch del enemigo
+    public float squashAmount = 0.2f;
+
+    // Escala original del enemigo (para restaurarla al final del salto)
+    private Vector3 originalScale;
+
+
+    // Indica si el enemigo ya ha matado al jugador
+    private bool hasKilledPlayer = false;
+
+
+
+
+    private void Start()
+    {
+        // Guardamos la escala original del enemigo
+        originalScale = transform.localScale;
+    }
 
 
     // Inicializa la posición lógica y física del enemigo
     public void Init(Vector2Int startCoords)
     {
-        currentTileCoords = startCoords;
+        // Aquí SÍ tenemos levelManager asignado por LevelManager
+        lm = levelManager;
 
-        // Coloca el enemigo encima del tile correspondiente
-        transform.position =
-            levelManager.GetTile(startCoords).transform.position
-            + Vector3.up * 1f;
-    }
+        currentTileCoords = startCoords; 
+        // Obtenemos el tile donde debe aparecer el enemigo
+        TileController startTile = lm.GetTile(startCoords);
+        // Lo colocamos encima del tile usando el offset
+        transform.position = startTile.transform.position + Vector3.up * enemyOffsetY; }
 
-    private void Update()
+
+        private void Update()
     {
-        // Si no está moviéndose, intenta moverse
-        if (!isMoving) 
-        { 
-            if (levelManager.useZigzag) 
-                TryMoveZigzag(); 
-            else 
-                TryMove(); 
+        // ⬇️ Si el nivel está completado, el enemigo NO debe moverse más.
+        // Esto evita que siga caminando después de que el jugador gane.
+        if (lm.levelCompleted)
+            return;
+
+        // ⬇️ Movimiento normal del enemigo. si no esta moviendose debe moverse
+        // Si ya mató al jugador → NO se mueve nunca más
+        if (hasKilledPlayer)
+            return;
+
+        // Si el nivel está completado → tampoco se mueve
+        if (lm.levelCompleted)
+            return;
+
+        // Movimiento normal
+        if (!isMoving)
+        {
+            if (lm.useZigzag)
+                TryMoveZigzag();
+            else
+                TryMove();
         }
+
     }
+
 
     // Movimiento Línea Recta
     public void TryMove()
@@ -60,7 +108,7 @@ public class EnemyController : MonoBehaviour
         Vector2Int next = currentTileCoords + direction;
 
         // Si existe tile en esa dirección, nos movemos
-        if (levelManager.HasTile(next))
+        if (lm.HasTile(next))
         {
             StartCoroutine(MoveToTile(next));
         }
@@ -75,14 +123,14 @@ public class EnemyController : MonoBehaviour
             Vector2Int nextAfterBounce = currentTileCoords + direction;
 
             // Si tampoco existe ese tile, invertimos también la dirección vertical
-            if (!levelManager.HasTile(nextAfterBounce))
+            if (!lm.HasTile(nextAfterBounce))
             {
                 direction.y *= -1; // rebote vertical
                 nextAfterBounce = currentTileCoords + direction;
             }
 
             // Si ahora sí existe, nos movemos
-            if (levelManager.HasTile(nextAfterBounce))
+            if (lm.HasTile(nextAfterBounce))
                 StartCoroutine(MoveToTile(nextAfterBounce));
         }
 
@@ -104,7 +152,7 @@ public class EnemyController : MonoBehaviour
         // Primer intento
         Vector2Int next = currentTileCoords + direction;
 
-        if (levelManager.HasTile(next))
+        if (lm.HasTile(next))
         {
             StartCoroutine(MoveToTile(next));
             return;
@@ -116,7 +164,7 @@ public class EnemyController : MonoBehaviour
 
         next = currentTileCoords + direction;
 
-        if (levelManager.HasTile(next))
+        if (lm.HasTile(next))
         {
             StartCoroutine(MoveToTile(next));
             return;
@@ -126,11 +174,13 @@ public class EnemyController : MonoBehaviour
         direction.y *= -1;
         next = currentTileCoords + direction;
 
-        if (levelManager.HasTile(next))
+        if (lm.HasTile(next))
         {
             StartCoroutine(MoveToTile(next));
         }
     }
+
+
 
 
     // Movimiento suave hacia el tile objetivo
@@ -138,40 +188,60 @@ public class EnemyController : MonoBehaviour
     {
         isMoving = true;
 
-        // Reproducir sonido de movimiento del enemigo
+        // Sonido de movimiento del enemigo
         AudioManager.Instance.PlaySFX(AudioManager.Instance.enemyMoveClip);
-
 
         // Posición inicial y final
         Vector3 startPos = transform.position;
-        Vector3 endPos =
-            levelManager.GetTile(targetCoords).transform.position
-            + Vector3.up * 1f;
+        TileController targetTile = lm.GetTile(targetCoords);
+        Vector3 endPos = targetTile.transform.position + Vector3.up * enemyOffsetY;
 
         float t = 0f;
 
-        // Calculamos la duración del movimiento según la velocidad
+        // Duración del movimiento según la velocidad (igual que antes)
         float moveDuration = 1f / speed;
 
-        // Movimiento interpolado (suave)
         while (t < moveDuration)
         {
             t += Time.deltaTime;
-            transform.position = Vector3.Lerp(startPos, endPos, t / moveDuration);
+            float lerp = t / moveDuration;
+
+            // --- 1) Movimiento horizontal (X y Z) ---
+            Vector3 horizontalPos = Vector3.Lerp(startPos, endPos, lerp);
+
+            // --- 2) Arco vertical (Y) ---
+            float arc = 4 * jumpHeight * lerp * (1 - lerp);
+            horizontalPos.y += arc;
+
+            // Aplicamos la posición final del frame
+            transform.position = horizontalPos;
+
+            // --- 3) Squash & Stretch del enemigo ---
+            // En el centro del salto se estira, al inicio y final se aplasta
+            float stretch = 1 + squashAmount * (1 - Mathf.Abs(lerp * 2 - 1));
+
+            // Escalamos solo en Y, manteniendo la escala original en X y Z
+            transform.localScale = new Vector3(
+                originalScale.x,
+                originalScale.y * stretch,
+                originalScale.z
+            );
+
             yield return null;
         }
-
 
         // Aseguramos la posición final exacta
         transform.position = endPos;
 
+        // Restauramos la escala original
+        transform.localScale = originalScale;
+
         // Instanciar partículas en la posición actual del enemigo
-        // Solo si hemos asignado un prefab en el Inspector
         if (stepParticlesPrefab != null)
         {
-            Instantiate(stepParticlesPrefab, transform.position, Quaternion.identity);
+            Vector3 particlePos = transform.position + new Vector3(0, 0.3f, 0);
+            Instantiate(stepParticlesPrefab, particlePos, Quaternion.identity);
         }
-
 
         // Actualizamos las coordenadas lógicas
         currentTileCoords = targetCoords;
@@ -179,10 +249,23 @@ public class EnemyController : MonoBehaviour
         isMoving = false;
     }
 
+
+
+
+
     //deteccion si el enemigo toca al playe
 
     private void OnTriggerEnter(Collider other)
     {
+        // ⬇️ Si el nivel está completado, ignoramos TODAS las colisiones. 
+        // Esto evita que el enemigo mate al jugador después de ganar.
+        if (lm.levelCompleted) 
+            return;
+
+        // Si ya matamos al jugador una vez, ignoramos más colisiones
+        if (hasKilledPlayer)
+            return;
+
         Debug.Log("colision detectada y dentro de Ontrigger");
 
         // Solo reaccionamos si lo que hemos tocado es el jugador
@@ -209,12 +292,20 @@ public class EnemyController : MonoBehaviour
             return; 
         }
 
-        Debug.Log("Llamamos al metodo FallAndDie");
+        Debug.Log("Llamamos al metodo DeathByEnemy");
 
-        // Matamos al jugador
-        player.StartCoroutine("FallAndDie");
+        // Paramos el movimiento del enemigo para que no siga saltando
+        isMoving = true; // lo dejamos "ocupado" para que Update no llame más a TryMove
 
-        Debug.Log("Se ha llamamos a metodo FallAndDie debria morir el player");
+        // Matamos al jugador con la animación de muerte por enemigo
+        player.StartCoroutine(player.DeathByEnemy());
+
+        Debug.Log("Se ha llamado a DeathByEnemy, el player debería morir SIN caer");
+
+        hasKilledPlayer = true;
+        isMoving = true; // lo dejamos "ocupado"
+
+
     }
 
 
