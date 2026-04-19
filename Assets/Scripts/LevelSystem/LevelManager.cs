@@ -2,8 +2,39 @@
 using System.Collections.Generic;
 using UnityEngine;
 
+
+// Configuración individual de cada enemigo en un nivel
+[System.Serializable]
+public class EnemyConfig
+{
+    public Vector2Int startCoords;     // posición inicial del enemigo (si no usamos aleatorio)
+    public float speed = 4f;           // velocidad del enemigo
+
+    // Tipo de IA que usará este enemigo
+    public EnemyController.EnemyAIType aiType = EnemyController.EnemyAIType.IA_BASICA;
+
+    // Índice del prefab que queremos usar
+    // 0 = básico, 1 = perseguidor, etc.
+    public int prefabIndex = 0;
+
+    // NUEVO: si es true, este enemigo aparecerá en una posición aleatoria válida
+    // (por ejemplo, en la fila superior, en un tile que exista y no sea agujero)
+    public bool randomTopSpawn = true;
+}
+
+
+
+
 public class LevelManager : MonoBehaviour
 {
+    // PREFAB DEL FONDO DEL MUNDO
+    // Asignaremos aquí el fondo correcto desde el Inspector
+    [Header("Fondos")]
+    public GameObject backgroundPrefab;          // Fondo antiguo (si lo quieres mantener)
+    public GameObject backgroundVisualPrefab;    // Fondo nuevo (imagen bonita)
+
+
+
     public PlayerController player;
     public TileController[,] tiles; // matriz lógica
     public int width = 3;
@@ -14,26 +45,63 @@ public class LevelManager : MonoBehaviour
 
     // Si es true → enemigo Zigzag
     // Si es false → enemigo Línea Recta
-    public bool useZigzag = false;
+    //public bool useZigzag = false; ****esta linea sustituida por le de "public EnemyConfig[] enemies;"
 
-    // Prefab del enemigo
-    public EnemyController enemyPrefab;
 
     // Lista de posiciones iniciales de los enemigos en el tablero
     // Cada elemento es una coordenada (x, y) de tile
-    public Vector2Int[] enemyStartPositions;
+    //public Vector2Int[] enemyStartPositions;****esta linea también sustituida por le de "public EnemyConfig[] enemies;"
+
+    // Lista de enemigos para este nivel
+    public EnemyConfig[] enemies;
+
+
+    // Lista de prefabs de enemigos
+    // Element 0 = enemigo básico
+    // Element 1 = enemigo perseguidor
+    // Element 2 = enemigo zigzag (si lo añades en el futuro)
+    public EnemyController[] enemyPrefabs;
+
+
+
 
     // ⬇️ Esta variable indica si el nivel ya ha sido completado.
     // Cuando el jugador pisa TODOS los tiles, la ponemos a true.
     // Los enemigos la consultan para saber si deben detenerse.
     public bool levelCompleted = false;
 
+    // Paleta visual del mundo actual
+    public WorldPalette palette;
 
+    // ⭐ Tiempo entre la aparición de cada enemigo (configurable desde el Inspector)
+    public float enemySpawnDelay = 2f;
 
+    // ⭐ Tiempo entre apariciones sucesivas SOLO de enemigos básicos (IA_BASICA)
+    [Header("Respawn enemigo básico")]
+    public float basicRespawnDelay = 3f;   // Ajusta este valor en el Inspector
 
 
     private void Start()
     {
+        // ⭐ Cambiar a la música del mundo actual
+        AudioManager.Instance.PlayMusic(AudioManager.Instance.world1Music);
+
+
+        // ⭐ INSTANCIAR EL FONDO DEL MUNDO ⭐ 
+        // Si hemos asignado un prefab de fondo en el Inspector, lo instanciamos aquí.
+        // ⭐ Instanciar fondo antiguo (si existe)
+        if (backgroundPrefab != null)
+        {
+            Instantiate(backgroundPrefab);
+        }
+
+        // ⭐ Instanciar fondo nuevo visual (si existe)
+        if (backgroundVisualPrefab != null)
+        {
+            Instantiate(backgroundVisualPrefab);
+        }
+
+
         // Creamos la matriz con el tamaño del tablero
         tiles = new TileController[width, height];
 
@@ -54,6 +122,10 @@ public class LevelManager : MonoBehaviour
             tile.heightLevel = Mathf.RoundToInt(tile.transform.position.y);
         }
 
+        // Aplicar colores del mundo a los tiles y luz ambiental
+        ApplyPalette();
+
+
 
         // Inicializamos al jugador en la posición (0,0)
         Vector2Int startCoords = new Vector2Int(0, 0);
@@ -68,31 +140,34 @@ public class LevelManager : MonoBehaviour
 
 
         player.transform.position = startTile.transform.position + Vector3.up * playerOffsetY;
+        // ⭐ Marcar el tile inicial como pisado ⭐
+        startTile.OnStepped();   // ← Esto enciende el tile igual que si el jugador lo pisara
 
 
-        // ⭐ CREAR ENEMIGOS AUTOMÁTICAMENTE ⭐
-        if (enemyStartPositions != null && enemyStartPositions.Length > 0)
+
+        // ⭐ CREAR ENEMIGOS CON RETRASO ⭐
+        // 1) Crear todos los enemigos UNA sola vez, con delay entre ellos
+        StartCoroutine(SpawnInitialEnemies());
+
+        // 2) Bucle independiente: ir creando SOLO enemigos básicos cada cierto tiempo
+        StartCoroutine(SpawnBasicRespawnLoop());
+
+
+
+
+        // ⭐ MOSTRAR EL NÚMERO DE NIVEL EN EL HUD ⭐
+        if (GameFlowManager.Instance != null)
         {
-            // Recorremos cada posición definida en el Inspector
-            for (int i = 0; i < enemyStartPositions.Length; i++)
-            {
-                Vector2Int enemyCoords = enemyStartPositions[i];
+            int worldIndex = GameFlowManager.Instance.currentWorldIndex;
+            int levelIndex = GameFlowManager.Instance.currentLevelIndex;
 
-                // Seguridad: solo creamos el enemigo si hay tile en esa posición
-                if (HasTile(enemyCoords))
-                {
-                    SpawnEnemy(enemyCoords, useZigzag);
-                }
-                else
-                {
-                    Debug.LogWarning("Intento de crear enemigo en coordenadas sin tile: " + enemyCoords);
-                }
-            }
+            HUDController hud = FindObjectOfType<HUDController>();
+            if (hud != null)
+                hud.SetLevel(worldIndex, levelIndex);
         }
-        else
-        {
-            Debug.LogWarning("No hay posiciones de enemigos definidas en enemyStartPositions.");
-        }
+
+
+
 
     }
     public bool CheckVictory()
@@ -132,31 +207,221 @@ public class LevelManager : MonoBehaviour
 
     //Este metodo crea un enemigo ,le asigna el LevelManager, le asigna coordenadas iniciales, decide si es Zigzag o Línea Recta
 
-    // Crea un enemigo en una posición concreta del tablero
-    public void SpawnEnemy(Vector2Int startCoords, bool zigzag)
+    // Crea un enemigo según la configuración recibida (config)
+    public void SpawnEnemy(EnemyConfig config)
     {
-        // 1. Crear una instancia del enemigo
-        EnemyController enemy = Instantiate(enemyPrefab);
+        // 1) Instanciar el prefab correcto según el índice
+        // enemyPrefabs[0] = Enemy_Basic
+        // enemyPrefabs[1] = Enemy_Chaser
+        EnemyController enemy = Instantiate(enemyPrefabs[config.prefabIndex]);
 
-        // 2. Asignar el LevelManager al enemigo
+        // 2) Asignar LevelManager al enemigo
         enemy.levelManager = this;
 
-        // 3. Inicializar al enemigo en el tile indicado
-        enemy.Init(startCoords);
+        // 3) DECIDIR LA POSICIÓN INICIAL (spawnCoords)
+        Vector2Int spawnCoords = config.startCoords;
 
-        // 4. Elegir el tipo de movimiento
-        if (zigzag)
+        // Si este enemigo está marcado como "randomTopSpawn",
+        // elegimos una posición aleatoria en la fila superior.
+        if (config.randomTopSpawn)
         {
-            // Activar Zigzag (la dirección inicial sigue siendo diagonal)
-            enemy.direction = new Vector2Int(1, -1);
-            enemy.toggle = false; // empezar alternancia
+            // Fila superior del tablero (y = height - 1)
+            int topY = height - 1;
+
+            // Lista de columnas válidas donde SÍ hay tile (no agujero)
+            List<int> validColumns = new List<int>();
+
+            for (int x = 0; x < width; x++)
+            {
+                Vector2Int test = new Vector2Int(x, topY);
+
+                // HasTile(test) devuelve true solo si:
+                // - está dentro de los límites
+                // - tiles[x,y] != null (es decir, hay TileController, no agujero)
+                if (HasTile(test))
+                {
+                    validColumns.Add(x);
+                }
+            }
+
+            if (validColumns.Count > 0)
+            {
+                // Elegimos una columna aleatoria entre las válidas
+                int randomIndex = Random.Range(0, validColumns.Count);
+                int randomX = validColumns[randomIndex];
+
+                spawnCoords = new Vector2Int(randomX, topY);
+            }
+            else
+            {
+                Debug.LogWarning("[LevelManager] No hay tiles válidos en la fila superior para spawn aleatorio.");
+            }
         }
-        else
+
+        // 4) Inicializar al enemigo en las coordenadas decididas
+        enemy.Init(spawnCoords);
+
+        // 5) Asignar velocidad
+        enemy.speed = config.speed;
+
+        // 6) Asignar tipo de IA
+        enemy.aiType = config.aiType;
+
+        // 7) Aplicar color de la paleta al SpriteRenderer principal
+        SpriteRenderer rend = enemy.GetComponentInChildren<SpriteRenderer>();
+        if (rend != null && palette != null)
         {
-            // Activar Línea Recta
-            enemy.direction = new Vector2Int(1, -1);
+            rend.color = palette.enemyColor;
+        }
+    }
+
+    //******************  Eliminado    **************
+    // Llamado por EnemyController cuando un enemigo "muere" (se cae, etc.)
+    // public void EnemyDied(EnemyController enemy)
+    //{
+    //   Debug.Log("[LevelManager] EnemyDied llamado por " + enemy.name);
+
+    // Aquí podríamos decidir qué hacer:
+    // - Contar cuántos enemigos quedan
+    // - Lanzar un respawn
+    // De momento, lanzamos un respawn genérico:
+    //   StartCoroutine(RespawnEnemyRoutine());
+    //}
+
+    // Corrutina que espera un tiempo y luego crea un nuevo enemigo
+    //private IEnumerator RespawnEnemyRoutine()
+    //{
+    // Esperamos el tiempo configurado en enemySpawnDelay
+    //  yield return new WaitForSeconds(enemySpawnDelay);
+
+    //enemySpawnDelay *= 0.95f; // cada oleada un 5% más rápido
+
+
+    // Por simplicidad, vamos a respawnear el PRIMER enemigo de la lista (enemies[0])
+    // En el futuro puedes hacer algo más avanzado (aleatorio, por tipo, etc.)
+    //if (enemies != null && enemies.Length > 0)
+    //{
+    //    EnemyConfig config = enemies[0];
+
+    // Aseguramos que use spawn aleatorio
+    //  config.randomTopSpawn = true;
+
+    // Creamos un nuevo enemigo
+    //SpawnEnemy(config);
+    //}
+    //   else
+    //   {
+    //       Debug.LogWarning("[LevelManager] No hay EnemyConfig definidos para respawn.");
+    //   }
+    //}
+    //*************************************************************
+
+
+
+
+
+    // ⭐ Corrutina que crea TODOS los enemigos UNA sola vez, con delay entre ellos ⭐
+    private IEnumerator SpawnInitialEnemies()
+    {
+        // Si no hay enemigos definidos, no hacemos nada
+        if (enemies == null || enemies.Length == 0)
+            yield break;
+
+        // Recorremos todos los enemigos definidos en el Inspector
+        for (int i = 0; i < enemies.Length; i++)
+        {
+            EnemyConfig config = enemies[i];
+
+            // Si usamos spawn aleatorio, ignoramos startCoords
+            if (config.randomTopSpawn)
+            {
+                // Aparece en una posición aleatoria válida (fila superior, sin agujero)
+                SpawnEnemy(config);
+            }
+            else
+            {
+                // Solo si NO es aleatorio, comprobamos startCoords
+                if (HasTile(config.startCoords))
+                    SpawnEnemy(config);
+                else
+                    Debug.LogWarning("Coordenadas inválidas para enemigo: " + config.startCoords);
+            }
+
+            // ⭐ Esperamos el tiempo configurado antes de crear el siguiente enemigo ⭐
+            yield return new WaitForSeconds(enemySpawnDelay);
         }
     }
 
 
+
+    // ⭐ Corrutina que crea SOLO enemigos básicos cada cierto tiempo ⭐
+    private IEnumerator SpawnBasicRespawnLoop()
+    {
+        // Si no hay enemigos definidos, no hacemos nada
+        if (enemies == null || enemies.Length == 0)
+            yield break;
+
+        // Bucle principal: mientras el nivel NO esté completado
+        while (!levelCompleted)
+        {
+            // Esperamos el tiempo configurado para el respawn del básico
+            yield return new WaitForSeconds(basicRespawnDelay);
+
+            // Recorremos la lista de enemigos definida en el Inspector
+            for (int i = 0; i < enemies.Length; i++)
+            {
+                EnemyConfig config = enemies[i];
+
+                // Solo queremos respawnear los que sean IA_BASICA
+                if (config.aiType == EnemyController.EnemyAIType.IA_BASICA)
+                {
+                    // Podemos forzar que el respawn sea aleatorio arriba
+                    // o respetar lo que tengas en el Inspector.
+                    // Si quieres que SIEMPRE sea aleatorio arriba, descomenta esta línea:
+                    // config.randomTopSpawn = true;
+
+                    config.randomTopSpawn = true;   // ← Forzamos spawn aleatorio SIEMPRE
+                    SpawnEnemy(config);
+
+                }
+            }
+        }
+    }
+
+
+
+
+
+
+    // Aplica la paleta del mundo a tiles, iluminación, etc.
+    private void ApplyPalette()
+    {
+        if (palette == null)
+        {
+            Debug.LogWarning("No hay paleta asignada en el LevelManager.");
+            return;
+        }
+
+        // 1. Luz ambiental del mundo
+        RenderSettings.ambientLight = palette.ambientColor;
+
+        // 2. Aplicar colores a todos los tiles
+        foreach (TileController tile in tiles)
+        {
+            if (tile != null)
+            {
+                tile.ApplyPaletteColors(palette.tileBaseColor, palette.tileTargetColor);
+            }
+        }
+    }
+
+    // Convierte una posición del mundo (X,Z) a coordenadas lógicas del tablero
+    public Vector2Int WorldToCoords(Vector3 worldPos)
+    {
+        int x = Mathf.FloorToInt(worldPos.x + 0.5f);
+        int y = Mathf.FloorToInt(worldPos.z + 0.5f);
+
+        return new Vector2Int(x, y);
+    }
 }
+

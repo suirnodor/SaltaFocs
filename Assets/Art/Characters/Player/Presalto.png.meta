@@ -139,13 +139,13 @@ TextureImporter:
       name: Presalto_0
       rect:
         serializedVersion: 2
-        x: 0
-        y: 0
-        width: 162
-        height: 168
-      alignment: 1
-      pivot: {x: 0, y: 1}
-      border: {x: 0, y: 0, z: 0, w: 0}
+        x: 11
+        y: 7
+        width: 123
+        height: 161
+      alignment: 9
+      pivot: {x: 0.54, y: 0}
+      border: {x: 9, y: 0, z: 0, w: 7}
       outline: []
       physicsShape: []
       tessellationDetail: 0
@@ -161,12 +161,12 @@ TextureImporter:
       rect:
         serializedVersion: 2
         x: 162
-        y: 0
+        y: 1
         width: 162
-        height: 168
-      alignment: 1
-      pivot: {x: 0, y: 1}
-      border: {x: 0, y: 0, z: 0, w: 0}
+        height: 167
+      alignment: 9
+      pivot: {x: 0.605, y: 0.035}
+      border: {x: 42, y: 6, z: 8, w: 11}
       outline: []
       physicsShape: []
       tessellationDetail: 0

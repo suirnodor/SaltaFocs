@@ -98,6 +98,7 @@ MonoBehaviour:
   baseColor: {r: 1, g: 1, b: 1, a: 1}
   targetColor: {r: 1, g: 0.917336, b: 0.015686274, a: 1}
   heightLevel: 0
+  stepVFX: {fileID: 7333823368332643838, guid: 4ba4e6cbc266c6346be18b956f411e16, type: 3}
 --- !u!65 &5978223204073248325
 BoxCollider:
   m_ObjectHideFlags: 0

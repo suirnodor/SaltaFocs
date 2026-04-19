@@ -4,48 +4,94 @@ using UnityEngine;
 
 public class AudioManager : MonoBehaviour
 {
-    // Instancia única del AudioManager (patrón Singleton)
-    // Esto permite llamar a AudioManager.Instance desde cualquier script
     public static AudioManager Instance;
 
-    // Este AudioSource será el que reproduzca los sonidos (SFX)
+    // -------------------------
+    // SFX
+    // -------------------------
     public AudioSource sfxSource;
 
-    // Clips de audio que asignaremos desde el Inspector para el player
-    public AudioClip jumpClip;   // Sonido al saltar
-    public AudioClip tileClip;   // Sonido al pisar un tile
-    public AudioClip deathClip;  // Sonido al morir
+    public AudioClip jumpClip;
+    public AudioClip tileClip;
+    public AudioClip deathClip;
 
-    // Clips de audio que asignaremos desde el Inspector para el enemigo
-    public AudioClip enemyMoveClip;     // Sonido cuando el enemigo se mueve
-    public AudioClip enemyBounceClip;   // Sonido cuando rebota en un borde
-    public AudioClip enemyHitClip;      // Sonido cuando mata al jugador
+    public AudioClip enemyMoveClip;
+    public AudioClip enemyBounceClip;
+    public AudioClip enemyHitClip;
 
+    public AudioClip uiClickClip;
+
+    // -------------------------
+    // MÚSICA
+    // -------------------------
+    [Header("Música")]
+    public AudioSource musicSource;   // NUEVO: fuente de música
+    public AudioClip menuMusic;       // NUEVO: música del menú
+    public AudioClip world1Music;     // NUEVO: música del mundo 1
+    public AudioClip world2Music;     // (más adelante)
+    public AudioClip world3Music;
+    public AudioClip world4Music;
+
+    public AudioClip victoryMusic;    // NUEVO
+    public AudioClip gameOverMusic;   // NUEVO
 
     private void Awake()
     {
-        // Si no existe un AudioManager en la escena, este será el primero
         if (Instance == null)
         {
             Instance = this;
-
-            // Esto hace que el AudioManager NO se destruya al cambiar de escena
             DontDestroyOnLoad(gameObject);
         }
         else
         {
-            // Si ya existe uno, destruimos este para evitar duplicados
             Destroy(gameObject);
         }
     }
 
-    // Función para reproducir un sonido
-    // Se llama desde otros scripts: AudioManager.Instance.PlaySFX(clip);
+    // -------------------------
+    // SFX
+    // -------------------------
     public void PlaySFX(AudioClip clip)
     {
-        // Si el clip no es nulo, lo reproducimos una vez
         if (clip != null)
             sfxSource.PlayOneShot(clip);
     }
-}
 
+    public void PlaySFX(AudioClip clip, float volume)
+    {
+        if (clip == null || sfxSource == null) return;
+
+        float previousVolume = sfxSource.volume;
+        sfxSource.volume = Mathf.Clamp01(volume);
+        sfxSource.PlayOneShot(clip);
+        sfxSource.volume = previousVolume;
+    }
+
+    public void PlayUIClick()
+    {
+        PlaySFX(uiClickClip);
+    }
+
+    // -------------------------
+    // MÚSICA
+    // -------------------------
+    public void PlayMusic(AudioClip clip, bool loop = true)
+    {
+        if (clip == null || musicSource == null)
+            return;
+
+        // Si ya está sonando esta música, NO reiniciar
+        if (musicSource.clip == clip && musicSource.isPlaying)
+            return;
+
+        musicSource.loop = loop;
+        musicSource.clip = clip;
+        musicSource.Play();
+    }
+
+    public void StopMusic()
+    {
+        if (musicSource != null)
+            musicSource.Stop();
+    }
+}

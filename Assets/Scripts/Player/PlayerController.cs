@@ -25,9 +25,13 @@ public class PlayerController : MonoBehaviour
     // Nueva variable para evitar que FallAndDie se ejecute muchas veces
     private bool isDead = false;
 
+    // Indica si el jugador está actualmente sobre un ascensor
+    public bool isOnElevator = false;
+
+
     // Offset vertical del jugador para que quede encima del tile 
     // Es constante → siempre tendrá este valor en todo el juego
-    public const float PLAYER_OFFSET_Y = 1.7f;
+    public const float PLAYER_OFFSET_Y = 1.1f;
 
 
     // Aquí guardaremos el LevelManager UNA sola vez
@@ -42,12 +46,38 @@ public class PlayerController : MonoBehaviour
     public float squashAmount = 0.1f;
 
     // Referencias a los sprites del jugador (los hijos)
-    public Transform spriteFront;
-    public Transform spriteBack;
+    //public Transform spriteFront;
+    //public Transform spriteBack;
 
     //escala original de los sprites del jugador (los hijos)
-    private Vector3 spriteFrontOriginalScale;
-    private Vector3 spriteBackOriginalScale;
+    //private Vector3 spriteFrontOriginalScale;
+    //private Vector3 spriteBackOriginalScale;
+
+
+    // Referencia al Animator del Player (para controlar las animaciones)
+    private Animator animator;
+
+
+    // Tiempo quieto antes de activar Idle especial
+    public float idleSpecialDelay = 3f;
+
+    // Temporizador interno
+    private float idleTimer = 0f;
+
+    // ------------------------------------------------------------
+    // Variables para detectar gestos táctiles (swipe)
+    // ------------------------------------------------------------
+    private Vector2 touchStartPos;
+    private Vector2 touchEndPos;
+    private bool isTouching = false;
+
+
+    // Volumen del SFX de salto (0.0 - 1.0). Ajustable desde el Inspector del prefab Player.
+    [Header("Audio")]
+    public float jumpSfxVolume = 0.6f;
+
+    private ElevatorCube elevator; // referencia al ascensor actual
+
 
 
 
@@ -55,7 +85,9 @@ public class PlayerController : MonoBehaviour
     // en qué tile empieza.
     public void Init(Vector2Int startCoords)
     {
+        // Guardamos las coordenadas iniciales del jugador en el tablero
         currentTileCoords = startCoords;
+
     }
 
 
@@ -67,11 +99,17 @@ public class PlayerController : MonoBehaviour
 
         // Guardamos el LevelManager en la variable lm 
         // Esto se ejecuta solo una vez al iniciar el jugador
-        lm = FindObjectOfType<LevelManager>();
+        //lm = FindObjectOfType<LevelManager>(); ********* me daba error por eso lo sustotuimos por el codigo de debajo
+        lm = FindFirstObjectByType<LevelManager>();
+
+
+        // Referencia al Animator (está en un hijo del Player)
+        animator = GetComponentInChildren<Animator>();
+
 
         //guardamos las escales de lo sprites del player hijos en las variables creadas
-        spriteFrontOriginalScale = spriteFront.localScale;
-        spriteBackOriginalScale = spriteBack.localScale;
+        //spriteFrontOriginalScale = spriteFront.localScale;
+        //spriteBackOriginalScale = spriteBack.localScale;
 
     }
 
@@ -126,7 +164,48 @@ public class PlayerController : MonoBehaviour
         {
             TryMove(Vector2Int.right);        // derecha
         };
+ 
+
+
     }
+
+
+    // ------------------------------------------------------------
+    // NUEVO: Detectar dirección del swipe y mover al jugador
+    // ------------------------------------------------------------
+    private void HandleSwipeDirection()
+    {
+        Vector2 swipe = touchEndPos - touchStartPos;
+
+        // Si el swipe es muy pequeño, ignoramos
+        if (swipe.magnitude < 50f)
+            return;
+
+        // Normalizamos para obtener dirección
+        swipe.Normalize();
+
+        int dx = 0;
+        int dy = 0;
+
+        // Tolerancia para decidir dirección
+        float tolerance = 0.4f;
+
+        // Horizontal
+        if (swipe.x > tolerance) dx = 1;
+        else if (swipe.x < -tolerance) dx = -1;
+
+        // Vertical
+        if (swipe.y > tolerance) dy = 1;
+        else if (swipe.y < -tolerance) dy = -1;
+
+        // Si no hay dirección clara, no mover
+        if (dx == 0 && dy == 0)
+            return;
+
+        // Ejecutar movimiento
+        TryMove(new Vector2Int(dx, dy));
+    }
+
 
 
     // OnDisable se ejecuta cuando el objeto se desactiva.
@@ -141,32 +220,140 @@ public class PlayerController : MonoBehaviour
     // El nuevo Input System llama a las acciones automáticamente.
     private void Update()
     {
-        // Si el jugador está moviéndose, no aceptamos nuevas teclas.
-        if (isMoving) return;
+        // Si el jugador está moviéndose, reiniciamos el temporizador
+        // y nos aseguramos de que NO está en idle especial
+        if (isMoving)
+        {
+            idleTimer = 0f;
+            animator.SetBool("IsIdleSpecial", false);
+            return;
+        }
+
+        // Si NO se mueve, sumamos tiempo
+        idleTimer += Time.deltaTime;
+
+        // Si supera el tiempo configurado → activar idle especial
+        if (idleTimer >= idleSpecialDelay)
+        {
+            animator.SetBool("IsIdleSpecial", true);
+        }
     }
+
+
 
 
     // Intenta mover al jugador en una dirección.
     private void TryMove(Vector2Int direction)
     {
+        Debug.Log($"TryMove called dir={direction} isMoving={isMoving} isDead={isDead} time={Time.time}");
+
+        // Evitar procesar input si ya estamos moviéndonos o si estamos muertos/caídos
+        //if (isMoving || isDead)
+        //    return;
+        if (isDead)
+            return;
+
+        if (isOnElevator)
+        {
+            // ⭐ Caso 1: ascensor central → permitir izquierda y derecha
+            if (elevator.isCenter)
+            {
+                if (direction != Vector2Int.left && direction != Vector2Int.right)
+                    return;
+
+                isOnElevator = false;
+
+                if (elevator != null)
+                    elevator.StartMoveDown();
+
+                // permitir movimiento normal
+            }
+            else
+            {
+                // ⭐ Caso 2: ascensor lateral → solo salida hacia el lado correcto
+                Vector2Int exitDirection = elevator.isLeftSide ? Vector2Int.right : Vector2Int.left;
+
+                if (direction != exitDirection)
+                    return;
+
+                isOnElevator = false;
+
+                if (elevator != null)
+                    elevator.StartMoveDown();
+            }
+        }
+
+
+
+
+        // En cuanto el jugador intenta moverse, salimos del idle especial
+        animator.SetBool("IsIdleSpecial", false);
+        idleTimer = 0f;
+
+
         // Calculamos las coordenadas del tile al que queremos ir.
         Vector2Int targetCoords = currentTileCoords + direction;
 
         // Preguntamos al LevelManager si existe un tile en esa posición.
-        if (FindObjectOfType<LevelManager>().HasTile(targetCoords))
+        //if (FindObjectOfType<LevelManager>().HasTile(targetCoords)) *** me daba error por eso lo cambiamos por el codigo de abajo
+        if (lm.HasTile(targetCoords))
         {
             // Como el movimiento es válido, reproducimos el sonido de salto.
             // Llamamos al AudioManager y le pedimos que reproduzca el clip de salto.
-            AudioManager.Instance.PlaySFX(AudioManager.Instance.jumpClip);
+            // Reproducir salto a lo indicado en la variable publica jumpSfxVolume
+            if (AudioManager.Instance != null)
+                AudioManager.Instance.PlaySFX(AudioManager.Instance.jumpClip, jumpSfxVolume);
+
+
+
+            // Lanzamos animación de salto completo
+            animator.SetTrigger("Jump");
+
 
             // Ahora sí, movemos al jugador hacia el tile destino.
             MoveTo(targetCoords);
         }
         else
         {
-            // No hay tile → salto hacia fuera y luego caída
+            // No hay tile → antes de caer, comprobamos si hay un ascensor en esa posición lógica
+
+            // 1) Convertimos las coords lógicas a posición de mundo (igual que en JumpOutAndFall)
+            Vector3 worldTargetPos = new Vector3(
+                targetCoords.x,
+                transform.position.y,   // misma altura actual
+                targetCoords.y
+            );
+
+            // 2) Buscamos colliders alrededor de ese punto
+            float checkRadius = 0.2f; // pequeño radio de búsqueda
+            Collider[] hits = Physics.OverlapSphere(worldTargetPos, checkRadius);
+
+            foreach (Collider hit in hits)
+            {
+                ElevatorCube elevator = hit.GetComponent<ElevatorCube>();
+                if (elevator != null)
+                {
+                    // Hemos encontrado un ascensor en la dirección del salto
+
+                    // Marcamos que estamos sobre un ascensor
+                    isOnElevator = true;
+
+                    // Hacemos un salto REAL hacia el ascensor
+                    StartCoroutine(JumpToElevator(elevator));
+                    return;
+
+                }
+            }
+
+            // 3) Si no hay ni tile ni ascensor → si estamos en ascensor, no caer
+            if (isOnElevator)
+                return;
+
+            // Si no estamos en ascensor → caída normal
             StartCoroutine(JumpOutAndFall(targetCoords));
+
         }
+
 
     }
 
@@ -188,7 +375,13 @@ public class PlayerController : MonoBehaviour
     // Corrutina que mueve al jugador suavemente durante moveDuration segundos.
     private IEnumerator MoveRoutine(Vector2Int targetCoords)
     {
+        Debug.Log($"MoveRoutine START target={targetCoords} time={Time.time}");
+
         isMoving = true; // Bloqueamos el movimiento.
+
+        // Lanzamos animación de salto
+        //animator.SetTrigger("Jump");
+
 
         // Guardamos la posición actual del jugador
         Vector3 startPos = transform.position;
@@ -223,20 +416,20 @@ public class PlayerController : MonoBehaviour
             transform.position = horizontalPos;
 
             // --- 3) Squash & Stretch (simulación de animación) ---
-            float stretch = 1 + squashAmount * (1 - Mathf.Abs(lerp * 2 - 1));
+            //float stretch = 1 + squashAmount * (1 - Mathf.Abs(lerp * 2 - 1));
 
             // Aplicamos la escala SOLO a los sprites visibles
-            spriteFront.localScale = new Vector3(
-                spriteFrontOriginalScale.x,
-                spriteFrontOriginalScale.y * stretch,
-                spriteFrontOriginalScale.z
-            );
+            //spriteFront.localScale = new Vector3(
+            //    spriteFrontOriginalScale.x,
+            //    spriteFrontOriginalScale.y * stretch,
+            //    spriteFrontOriginalScale.z
+            //);
 
-            spriteBack.localScale = new Vector3(
-                spriteBackOriginalScale.x,
-                spriteBackOriginalScale.y * stretch,
-                spriteBackOriginalScale.z
-            );
+            //spriteBack.localScale = new Vector3(
+            //    spriteBackOriginalScale.x,
+            //    spriteBackOriginalScale.y * stretch,
+            //    spriteBackOriginalScale.z
+            //);
 
 
             yield return null;
@@ -246,8 +439,8 @@ public class PlayerController : MonoBehaviour
         transform.position = endPos;
 
         // Restauramos escala normal en los sprites
-        spriteFront.localScale = spriteFrontOriginalScale;
-        spriteBack.localScale = spriteBackOriginalScale;
+        //spriteFront.localScale = spriteFrontOriginalScale;
+        //spriteBack.localScale = spriteBackOriginalScale;
 
 
         // Avisamos al tile que ha sido pisado.
@@ -257,10 +450,42 @@ public class PlayerController : MonoBehaviour
         // Comprobamos si ya hemos ganado (todos los tiles pisados).
         if (lm.CheckVictory())
         {
-            StartCoroutine(RestartAfterWin());
+            // Bloqueamos el movimiento y el input para que el jugador no pueda seguir moviéndose
+            isMoving = true;
+            controls.Disable();
+
+            // Lanzamos animación de victoria
+            animator.SetTrigger("Win");
+
+            // Esperamos un poco para que la animación se vea completa
+            yield return new WaitForSeconds(1.5f);   // Ajusta el tiempo si quieres
+
+            // Ahora sí, cambiamos a la escena Victory
+            if (GameFlowManager.Instance != null)
+            {
+                GameFlowManager.Instance.OnLevelCompleted();
+            }
+            else
+            {
+                Debug.LogError("GameFlowManager.Instance es NULL. Asegúrate de que hay un GameFlowManager en la escena inicial.");
+            }
+
+            yield break;
         }
 
+
+
+        //else
+        //{
+        // Animación de aterrizaje
+        //animator.SetTrigger("JumpLand");
+        //}
+
+
         isMoving = false; // Permitimos nuevos movimientos.
+
+        Debug.Log($"MoveRoutine END target={targetCoords} time={Time.time}");
+
     }
 
 
@@ -285,6 +510,12 @@ public class PlayerController : MonoBehaviour
         // Marcamos que el jugador ya ha muerto (evita múltiples ejecuciones)
         isDead = true;
 
+        
+
+        // Desactivar controles para que no lleguen más inputs mientras caemos
+        controls.Disable();
+
+
         Debug.Log("FallAndDie() HA SIDO LLAMADO y estamos en PlayerController"); // ← MENSAJE DE PRUEBA
 
         // Reproducir sonido de muerte
@@ -292,10 +523,11 @@ public class PlayerController : MonoBehaviour
 
         isMoving = true; // Bloqueamos el movimiento.
 
+
         Vector3 startPos = transform.position;
 
-        // Caída de 5 unidades hacia abajo (no infinita).
-        Vector3 endPos = startPos + Vector3.down * 5f;
+        // Caída de 20 unidades hacia abajo (no infinita).
+        Vector3 endPos = startPos + Vector3.down * 20f;
 
         float t = 0f;
         float duration = 0.5f; // Duración de la caída.
@@ -311,10 +543,18 @@ public class PlayerController : MonoBehaviour
 
         Debug.Log("Jugador muerto por caída");
 
-        // Esperamos un momento y reiniciamos la escena.
+        // Esperamos un momento y vamos a GameOver
         yield return new WaitForSeconds(1f);
 
-        SceneManager.LoadScene(SceneManager.GetActiveScene().name);
+        if (GameFlowManager.Instance != null)
+        {
+            GameFlowManager.Instance.OnPlayerDied();
+        }
+        else
+        {
+            Debug.LogError("GameFlowManager.Instance es NULL");
+        }
+
     }
 
 
@@ -343,28 +583,39 @@ public class PlayerController : MonoBehaviour
         AudioManager.Instance.PlaySFX(AudioManager.Instance.deathClip);
 
         // ⬇️ Aquí más adelante lanzaremos la animación HIT del Animator
-        // Ejemplo futuro:
-        // animator.SetTrigger("Hit");
+        animator.SetTrigger("Hit");
+
 
         // Esperamos un poco para que se vea la animación de muerte
         yield return new WaitForSeconds(0.8f);
 
-        // Reiniciamos la escena
-        SceneManager.LoadScene(SceneManager.GetActiveScene().name);
+        // Ir a GameOver
+        if (GameFlowManager.Instance != null)
+        {
+            GameFlowManager.Instance.OnPlayerDied();
+        }
+        else
+        {
+            Debug.LogError("GameFlowManager.Instance es NULL");
+        }
+
     }
 
 
 
-
+    //*********ya no se utiliza la subrutitna RestarAfterWin y la ponemos en comentarios
     // Corrutina para reiniciar la escena después de ganar.
-    private IEnumerator RestartAfterWin()
-    {
-        // Esperamos un segundo para que el jugador vea que ha ganado.
-        yield return new WaitForSeconds(1f);
+    //private IEnumerator RestartAfterWin()
+    //{
+    // Esperamos un segundo para que el jugador vea que ha ganado.
+    //  yield return new WaitForSeconds(1f);
 
-        // Reiniciamos la escena actual.
-        SceneManager.LoadScene(SceneManager.GetActiveScene().name);
-    }
+    // Reiniciamos la escena actual.
+    //SceneManager.LoadScene(SceneManager.GetActiveScene().name);
+    //}
+    //********************hasta aqui subrutina  RestarAfterWin
+
+
 
     public void SetLevelManager(LevelManager manager)
     {
@@ -377,7 +628,12 @@ public class PlayerController : MonoBehaviour
     // ------------------------------------------------------------
     private IEnumerator JumpOutAndFall(Vector2Int targetCoords)
     {
+      
         isMoving = true; // Bloqueamos movimiento
+
+        // Lanzamos animación de caída
+        animator.SetTrigger("Fall");
+
 
         // Posición actual del jugador
         Vector3 startPos = transform.position;
@@ -412,6 +668,106 @@ public class PlayerController : MonoBehaviour
         // Cuando termina el salto hacia fuera → empieza la caída real
         StartCoroutine(FallAndDie());
     }
+
+
+    private IEnumerator JumpToElevator(ElevatorCube elevator)
+    {
+        isMoving = true;
+
+        animator.SetTrigger("Jump");
+
+        Vector3 startPos = transform.position;
+        Vector3 endPos = elevator.transform.position + Vector3.up * PLAYER_OFFSET_Y;
+
+        float t = 0f;
+        float duration = moveDuration;
+
+        while (t < duration)
+        {
+            t += Time.deltaTime;
+            float lerp = t / duration;
+
+            Vector3 pos = Vector3.Lerp(startPos, endPos, lerp);
+            float arc = 4 * jumpHeight * lerp * (1 - lerp);
+            pos.y += arc;
+
+            transform.position = pos;
+
+            yield return null;
+        }
+
+        // Aseguramos posición final exacta
+        transform.position = endPos;
+
+        isMoving = false;
+
+
+        this.elevator = elevator; // guardamos referencia al ascensor actual
+
+        // ⬇️ NUEVO: decirle al ascensor que empiece a subir con este jugador
+        elevator.StartElevatorWithPlayer(this);
+    }
+
+
+
+    // ------------------------------------------------------------
+    // MÉTODOS PARA ACTIVAR / DESACTIVAR CONTROLES DEL JUGADOR
+    // ------------------------------------------------------------
+
+    // Llamado cuando el juego entra en pausa
+    public void DisableControls()
+    {
+        // Desactiva el Input System → el jugador NO recibe teclas
+        controls.Disable();
+    }
+
+    // Llamado cuando el juego sale de pausa
+    public void EnableControls()
+    {
+        // Reactiva el Input System → el jugador vuelve a recibir teclas
+        controls.Enable();
+    }
+
+    // ------------------------------------------------------------
+    // MÉTODO PARA PlayerInput: acción Tap (pantalla táctil)
+    // ------------------------------------------------------------
+    public void OnTap(InputAction.CallbackContext ctx)
+    {
+        // Mensaje de depuración para saber si OnTap se está llamando
+        Debug.Log($"OnTap llamado. Phase = {ctx.phase}");
+
+        // Usamos el NUEVO Input System para leer el dedo
+        var touchscreen = Touchscreen.current;
+
+        // Si no hay pantalla táctil disponible, salimos
+        if (touchscreen == null)
+        {
+            Debug.Log("No hay Touchscreen.current");
+            return;
+        }
+
+        // Cuando empieza el toque
+        if (ctx.started)
+        {
+            // Leemos la posición del dedo en el momento de empezar
+            touchStartPos = touchscreen.primaryTouch.position.ReadValue();
+            isTouching = true;
+            Debug.Log($"TOQUE INICIADO en {touchStartPos}");
+        }
+
+        // Cuando termina el toque
+        if (ctx.canceled)
+        {
+            // Leemos la posición del dedo al terminar
+            touchEndPos = touchscreen.primaryTouch.position.ReadValue();
+            isTouching = false;
+            Debug.Log($"TOQUE TERMINADO en {touchEndPos}");
+
+            HandleSwipeDirection();
+        }
+    }
+
+
 
 
 }
